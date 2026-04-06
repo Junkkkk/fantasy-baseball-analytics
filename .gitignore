@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+
+# 로컬 설정 (개인 정보)
+config_local.py
+.env
+.env.local
+
+# 리포트/로그
+reports/
+logs/
+*.xlsx
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
