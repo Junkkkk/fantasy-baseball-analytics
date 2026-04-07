@@ -214,8 +214,14 @@ def simulate_matchup(my_stats: dict, opp_stats: dict, my_remaining: dict, opp_re
     return pd.DataFrame(rows)
 
 
-def get_strategy_recommendations(comparison_df: pd.DataFrame) -> list[dict]:
-    """매치업 비교 결과를 기반으로 전략 추천을 생성한다."""
+def get_strategy_recommendations(comparison_df: pd.DataFrame, matchup_progress: float = 1.0) -> list[dict]:
+    """매치업 비교 결과를 기반으로 전략 추천을 생성한다.
+
+    Args:
+        comparison_df: 카테고리별 비교 결과
+        matchup_progress: 매치업 진행도 (0.0 = 시작 직후, 1.0 = 마지막 날)
+                          주중 표본이 적을 때는 분류를 보수적으로 처리한다.
+    """
     recommendations = []
     wins = comparison_df[comparison_df["result"] == "WIN"]
     losses = comparison_df[comparison_df["result"] == "LOSE"]
@@ -225,30 +231,53 @@ def get_strategy_recommendations(comparison_df: pd.DataFrame) -> list[dict]:
     win_count = len(wins)
     loss_count = len(losses)
 
+    progress_pct = int(matchup_progress * 100)
     recommendations.append({
         "category": "전체",
         "action": "요약",
         "reason": f"현재 {win_count}승 {loss_count}패 {len(ties)}무 → "
-                  f"{'유리' if win_count > total_cats // 2 else '불리'}한 상황",
+                  f"{'유리' if win_count > total_cats // 2 else '불리'}한 상황 "
+                  f"(매치업 진행도: {progress_pct}%)",
     })
+
+    # 매치업 초반 (20% 미만 ≈ 첫날~1.5일차): 표본 부족으로 전략 분류 자제
+    if matchup_progress < 0.20:
+        recommendations.append({
+            "category": "전체",
+            "action": "관망",
+            "reason": "매치업 초반이라 표본이 적습니다. 며칠 더 지나봐야 의미 있는 추세가 보입니다. "
+                      "오늘 라인업/FA는 평소대로 운영하세요.",
+        })
+        return recommendations
+
+    # 진행도에 따른 임계값 조정
+    # 초반일수록 더 큰 차이가 있어야 '근소' 또는 '큰 차이'로 판정
+    # progress=0.2 → 4배, progress=0.5 → 2배, progress=1.0 → 1배
+    threshold_multiplier = max(1.0, 1.0 / matchup_progress)
+    # 포기 판정은 더 보수적: 매치업 끝나갈 때만 적극적으로
+    abandon_multiplier = threshold_multiplier * (1.0 + (1.0 - matchup_progress) * 2.0)
 
     for _, row in comparison_df.iterrows():
         cat = row["category"]
         diff = abs(row["diff"])
+        base_threshold = _get_threshold(cat)
+        close_threshold = base_threshold * threshold_multiplier
+        abandon_threshold = base_threshold * 3 * abandon_multiplier
 
-        if row["result"] == "LOSE" and diff < _get_threshold(cat):
+        if row["result"] == "LOSE" and diff < close_threshold:
+            confidence = "역전 가능성 있음" if matchup_progress >= 0.5 else "초반이라 추세 미확정"
             recommendations.append({
                 "category": cat,
                 "action": "집중",
-                "reason": f"{cat}에서 근소하게 뒤짐 (차이: {row['diff']:.3f}). 역전 가능성 있음!",
+                "reason": f"{cat}에서 근소하게 뒤짐 (차이: {row['diff']:.3f}). {confidence}.",
             })
-        elif row["result"] == "WIN" and diff < _get_threshold(cat):
+        elif row["result"] == "WIN" and diff < close_threshold:
             recommendations.append({
                 "category": cat,
                 "action": "수비",
                 "reason": f"{cat}에서 근소 리드 (차이: {row['diff']:.3f}). 리드 유지 필요.",
             })
-        elif row["result"] == "LOSE" and diff >= _get_threshold(cat) * 3:
+        elif row["result"] == "LOSE" and diff >= abandon_threshold:
             recommendations.append({
                 "category": cat,
                 "action": "포기",
@@ -256,6 +285,21 @@ def get_strategy_recommendations(comparison_df: pd.DataFrame) -> list[dict]:
             })
 
     return recommendations
+
+
+def calculate_matchup_progress(matchup_period: int = None) -> float:
+    """현재 매치업 진행도를 계산한다 (0.0 ~ 1.0).
+
+    ESPN H2H 매치업은 월요일~일요일 7일 단위.
+    """
+    from datetime import datetime
+    today = datetime.now()
+    # weekday(): 월=0, 일=6
+    day_of_week = today.weekday()
+    # 매치업 첫날(월) 기준으로 경과 진행도
+    # 월 = 1/7, 화 = 2/7, ..., 일 = 7/7
+    progress = (day_of_week + 1) / 7.0
+    return progress
 
 
 def _get_threshold(category: str) -> float:

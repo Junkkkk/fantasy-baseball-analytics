@@ -29,6 +29,7 @@ from espn_client import (
 )
 from analytics.matchup import (
     extract_category_stats, compare_categories, get_strategy_recommendations,
+    calculate_matchup_progress,
 )
 from analytics.lineup import recommend_lineup, get_injury_alerts
 from analytics.free_agents import (
@@ -227,9 +228,10 @@ with tab1:
 
                     # 전략 추천
                     st.subheader("🎯 전략 추천")
-                    strategy = get_strategy_recommendations(comparison)
+                    progress = calculate_matchup_progress()
+                    strategy = get_strategy_recommendations(comparison, matchup_progress=progress)
                     for rec in strategy:
-                        icon = {"집중": "🔵", "수비": "🟢", "포기": "🔴", "요약": "📌"}.get(rec["action"], "⚪")
+                        icon = {"집중": "🔵", "수비": "🟢", "포기": "🔴", "요약": "📌", "관망": "⏳"}.get(rec["action"], "⚪")
                         st.markdown(f"{icon} **[{rec['action']}] {rec['category']}**: {rec['reason']}")
 
                     # 엑셀 다운로드 (매치업)

@@ -13,6 +13,7 @@ from espn_client import (
 )
 from analytics.matchup import (
     extract_category_stats, compare_categories, get_strategy_recommendations,
+    calculate_matchup_progress,
 )
 from analytics.lineup import recommend_lineup, get_injury_alerts
 from analytics.free_agents import (
@@ -83,10 +84,11 @@ def main():
                     matchup_df = compare_categories(my_stats, opp_stats)
                     print(matchup_df.to_string(index=False))
 
-                    strategy = get_strategy_recommendations(matchup_df)
+                    progress = calculate_matchup_progress()
+                    strategy = get_strategy_recommendations(matchup_df, matchup_progress=progress)
                     print("\n전략 추천:")
                     for rec in strategy:
-                        icon = {"집중": "🔵", "수비": "🟢", "포기": "🔴", "요약": "📌"}.get(rec["action"], "⚪")
+                        icon = {"집중": "🔵", "수비": "🟢", "포기": "🔴", "요약": "📌", "관망": "⏳"}.get(rec["action"], "⚪")
                         print(f"  {icon} [{rec['action']}] {rec['category']}: {rec['reason']}")
                     break
         except Exception as e:
