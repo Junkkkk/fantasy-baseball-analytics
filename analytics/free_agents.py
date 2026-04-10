@@ -6,6 +6,7 @@ import config
 from analytics.matchup import STAT_KEY_MAP, get_stat_value
 from analytics.lineup import classify_players, _get_best_stats, PITCHER_POSITIONS
 from analytics.blended_stats import get_blended_stats
+from analytics.schedule import has_game_today, is_probable_starter_today, get_opponent_today
 
 
 def analyze_roster_needs(roster: list) -> dict:
@@ -105,10 +106,22 @@ def identify_weak_categories(my_stats: dict, opp_stats: dict) -> list[dict]:
     return weaknesses
 
 
-def rank_free_agents(fa_list: list, target_categories: list[str], top_n: int = 10) -> pd.DataFrame:
-    """타겟 카테고리 기준으로 FA를 랭킹한다."""
+def rank_free_agents(fa_list: list, target_categories: list[str], top_n: int = 10,
+                     daily_only: bool = False) -> pd.DataFrame:
+    """타겟 카테고리 기준으로 FA를 랭킹한다.
+
+    Args:
+        daily_only: True이면 오늘 경기 있는 선수만, SP는 오늘 선발 등판만 추천
+    """
     rows = []
     for player in fa_list:
+        # 데일리 필터: 경기 없으면 제외, SP는 선발 등판 아니면 제외
+        if daily_only:
+            if not has_game_today(player):
+                continue
+            if _is_sp(player) and not is_probable_starter_today(player):
+                continue
+
         is_pitcher = _is_pitcher(player)
         stats = get_blended_stats(player, is_pitcher=is_pitcher)
         if not stats:
@@ -137,6 +150,8 @@ def rank_free_agents(fa_list: list, target_categories: list[str], top_n: int = 1
                 "proTeam": getattr(player, "proTeam", ""),
                 "score": round(score, 2),
             }
+            if daily_only:
+                row["상대팀"] = get_opponent_today(player)
             for cat in target_categories:
                 row[cat] = round(cat_values.get(cat, 0), 3)
             rows.append(row)
@@ -236,13 +251,15 @@ def recommend_streaming_pitchers(fa_list: list, top_n: int = 5) -> pd.DataFrame:
     return df
 
 
-def recommend_pitcher_swaps(my_roster: list, fa_list: list, top_n: int = 5) -> pd.DataFrame:
-    """오늘 등판 안 하는 내 SP ↔ 오늘 등판하는 FA SP 교체 추천.
+def recommend_pitcher_swaps(my_roster: list, fa_list: list) -> dict:
+    """오늘 등판 안 하는 내 SP & 오늘 등판하는 FA SP 전체 목록 + 시즌 기록.
 
     Returns:
-        교체 추천 DataFrame: drop_player, add_player, drop_score, add_score, score_gain
+        {
+            "my_off_today": DataFrame (내 SP 중 오늘 등판 없는 선수 + 시즌 기록),
+            "fa_starting_today": DataFrame (FA SP 중 오늘 등판 예정 + 시즌 기록),
+        }
     """
-    from analytics.schedule import is_probable_starter_today
     from analytics.scoring import score_pitcher_zscore
 
     # 내 팀에서 SP만 필터
@@ -253,51 +270,61 @@ def recommend_pitcher_swaps(my_roster: list, fa_list: list, top_n: int = 5) -> p
         if pos == "SP" or ("SP" in eligible and "RP" not in eligible):
             my_pitchers.append(p)
 
-    # 내 투수 중 오늘 등판 안 하는 선수 (벤치 후보)
-    my_off_today = []
+    # 내 투수 중 오늘 등판 안 하는 선수
+    my_off_rows = []
     for p in my_pitchers:
         injury = getattr(p, "injuryStatus", "ACTIVE")
         if injury in ("OUT", "IL", "IL10", "IL60", "FIFTEEN_DAY_DL", "SIXTY_DAY_DL", "TEN_DAY_DL"):
             continue
         if not is_probable_starter_today(p):
-            # 등판 안 하는 SP의 raw 점수 (매치업 조정 없는 순수 가치)
+            stats = get_blended_stats(p, is_pitcher=True)
+            outs = (stats or {}).get("OUTS", 0) or 0
+            ip = outs / 3.0 if outs > 0 else 0
             score = score_pitcher_zscore(p).get("score", 0)
-            my_off_today.append({"player": p, "score": score})
+            my_off_rows.append({
+                "name": p.name,
+                "proTeam": getattr(p, "proTeam", ""),
+                "IP": round(ip, 1),
+                "K": int(get_stat_value(stats or {}, "K")),
+                "W": int(get_stat_value(stats or {}, "W")),
+                "ERA": round(get_stat_value(stats or {}, "ERA"), 2),
+                "WHIP": round(get_stat_value(stats or {}, "WHIP"), 2),
+                "score": round(score, 2),
+            })
 
-    # FA 중 오늘 등판하는 SP (픽업 후보)
-    fa_starting_today = []
+    # FA 중 오늘 등판하는 SP 전체
+    fa_rows = []
     for p in fa_list:
         pos = p.position or ""
         eligible = p.eligibleSlots if hasattr(p, "eligibleSlots") else []
         if pos != "SP" and "SP" not in eligible:
             continue
         if is_probable_starter_today(p):
+            stats = get_blended_stats(p, is_pitcher=True)
+            outs = (stats or {}).get("OUTS", 0) or 0
+            ip = outs / 3.0 if outs > 0 else 0
             score = score_pitcher_zscore(p).get("score", 0)
-            fa_starting_today.append({"player": p, "score": score})
+            fa_rows.append({
+                "name": p.name,
+                "proTeam": getattr(p, "proTeam", ""),
+                "상대팀": get_opponent_today(p),
+                "IP": round(ip, 1),
+                "K": int(get_stat_value(stats or {}, "K")),
+                "W": int(get_stat_value(stats or {}, "W")),
+                "ERA": round(get_stat_value(stats or {}, "ERA"), 2),
+                "WHIP": round(get_stat_value(stats or {}, "WHIP"), 2),
+                "score": round(score, 2),
+            })
 
-    # 점수 높은 순으로 정렬
-    fa_starting_today.sort(key=lambda x: x["score"], reverse=True)
-    my_off_today.sort(key=lambda x: x["score"])  # 낮은 점수부터 (드롭 후보)
+    my_off_df = pd.DataFrame(my_off_rows)
+    fa_starting_df = pd.DataFrame(fa_rows)
 
-    # 매칭: 가장 약한 내 투수 ↔ 가장 강한 FA
-    rows = []
-    for fa_entry in fa_starting_today[:top_n]:
-        if not my_off_today:
-            break
-        drop = my_off_today[0]
-        gain = fa_entry["score"] - drop["score"]
-        if gain <= 0:
-            continue
-        rows.append({
-            "교체out": drop["player"].name,
-            "out_score": round(drop["score"], 2),
-            "교체in (오늘 등판)": fa_entry["player"].name,
-            "in_team": getattr(fa_entry["player"], "proTeam", ""),
-            "in_score": round(fa_entry["score"], 2),
-            "점수향상": round(gain, 2),
-        })
+    if not my_off_df.empty:
+        my_off_df = my_off_df.sort_values("score", ascending=True).reset_index(drop=True)
+    if not fa_starting_df.empty:
+        fa_starting_df = fa_starting_df.sort_values("score", ascending=False).reset_index(drop=True)
 
-    return pd.DataFrame(rows)
+    return {"my_off_today": my_off_df, "fa_starting_today": fa_starting_df}
 
 
 def _is_pitcher(player) -> bool:
@@ -305,6 +332,13 @@ def _is_pitcher(player) -> bool:
     pos = player.position if hasattr(player, "position") else ""
     eligible = player.eligibleSlots if hasattr(player, "eligibleSlots") else []
     return pos in PITCHER_POSITIONS or any(s in PITCHER_POSITIONS for s in eligible)
+
+
+def _is_sp(player) -> bool:
+    """선수가 선발투수(SP)인지 판별."""
+    pos = player.position if hasattr(player, "position") else ""
+    eligible = player.eligibleSlots if hasattr(player, "eligibleSlots") else []
+    return pos == "SP" or ("SP" in eligible and "RP" not in eligible)
 
 
 def _close_threshold(category: str) -> float:

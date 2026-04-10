@@ -366,33 +366,65 @@ with tab3:
             default=target[:5],
         )
 
+        # ============================================================
+        # ⚡ 데일리 추천 (오늘 바로 활용 가능)
+        # ============================================================
+        st.subheader("⚡ 데일리 추천 — 오늘 바로 활용 가능한 선수")
+        st.caption("오늘 경기가 있는 선수만 추천합니다. SP는 오늘 선발 등판 예정인 경우만 포함됩니다.")
+
         if selected_cats:
-            fa_df = rank_free_agents(fa_list, selected_cats)
+            daily_df = rank_free_agents(fa_list, selected_cats, daily_only=True)
+            if not daily_df.empty:
+                st.dataframe(daily_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("오늘 추천할 FA가 없습니다.")
+
+        # 오늘 SP 교체 추천 (전체 목록 + 시즌 기록)
+        st.markdown("#### 🔁 오늘 SP 교체 추천")
+        swaps = recommend_pitcher_swaps(my_team.roster, fa_list)
+        swap_col1, swap_col2 = st.columns(2)
+        with swap_col1:
+            st.markdown("**내 SP — 오늘 등판 없음** (교체 후보)")
+            if not swaps["my_off_today"].empty:
+                st.dataframe(swaps["my_off_today"], use_container_width=True, hide_index=True)
+            else:
+                st.caption("오늘 등판 안 하는 내 SP가 없습니다.")
+        with swap_col2:
+            st.markdown("**FA SP — 오늘 등판 예정** (픽업 후보)")
+            if not swaps["fa_starting_today"].empty:
+                st.dataframe(swaps["fa_starting_today"], use_container_width=True, hide_index=True)
+            else:
+                st.caption("오늘 등판 예정인 FA SP가 없습니다.")
+
+        st.divider()
+
+        # ============================================================
+        # 📈 중장기 추천 (좋은 매물 선점)
+        # ============================================================
+        st.subheader("📈 중장기 추천 — 장기적으로 챙길 매물")
+        st.caption("경기 유무와 관계없이 실력 기준으로 추천합니다.")
+
+        if selected_cats:
+            fa_df = rank_free_agents(fa_list, selected_cats, daily_only=False)
             st.session_state["fa_df"] = fa_df
             if not fa_df.empty:
                 st.dataframe(fa_df, use_container_width=True, hide_index=True)
             else:
                 st.info("추천할 FA가 없습니다.")
 
+        # 스트리밍 투수
+        st.markdown("#### 🔥 스트리밍 투수 추천")
+        streamers = recommend_streaming_pitchers(fa_list)
+        if not streamers.empty:
+            st.dataframe(streamers, use_container_width=True, hide_index=True)
+
+        st.divider()
+
         # 드롭 후보
         st.subheader("📉 드롭 후보")
         drops = recommend_drops(my_team.roster)
         if not drops.empty:
             st.dataframe(drops, use_container_width=True, hide_index=True)
-
-        # 오늘 등판 SP 교체 추천
-        st.subheader("🔁 오늘 SP 교체 추천 (등판 안하는 내 SP ↔ 등판하는 FA SP)")
-        swaps = recommend_pitcher_swaps(my_team.roster, fa_list)
-        if not swaps.empty:
-            st.dataframe(swaps, use_container_width=True, hide_index=True)
-        else:
-            st.caption("교체로 점수 향상되는 매칭이 없습니다.")
-
-        # 스트리밍 투수
-        st.subheader("🔥 스트리밍 투수 추천 (FA 전체)")
-        streamers = recommend_streaming_pitchers(fa_list)
-        if not streamers.empty:
-            st.dataframe(streamers, use_container_width=True, hide_index=True)
 
     except Exception as e:
         st.error(f"FA 데이터 로딩 실패: {e}")

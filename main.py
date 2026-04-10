@@ -19,7 +19,7 @@ from analytics.lineup import recommend_lineup, get_injury_alerts
 from analytics.free_agents import (
     identify_weak_categories, rank_free_agents,
     recommend_drops, recommend_streaming_pitchers,
-    analyze_roster_needs,
+    analyze_roster_needs, recommend_pitcher_swaps,
 )
 from analytics.scoring import compute_league_norms
 from analytics.schedule import load_today_schedule, get_today_summary
@@ -142,24 +142,52 @@ def main():
             )]
             if weak_cats:
                 print(f"\n약점 카테고리: {', '.join(weak_cats)}")
-                fa_df = rank_free_agents(fa_list, weak_cats)
+                target_cats = weak_cats
             else:
-                fa_df = rank_free_agents(fa_list, config.ALL_CATEGORIES)
+                target_cats = config.ALL_CATEGORIES
         else:
-            fa_df = rank_free_agents(fa_list, config.ALL_CATEGORIES)
+            target_cats = config.ALL_CATEGORIES
 
+        # ⚡ 데일리 추천
+        print("\n⚡ 데일리 추천 — 오늘 바로 활용 가능한 선수")
+        print("-" * 40)
+        daily_df = rank_free_agents(fa_list, target_cats, daily_only=True)
+        if not daily_df.empty:
+            print(daily_df.to_string(index=False))
+        else:
+            print("오늘 추천할 FA가 없습니다.")
+
+        # SP 교체 추천
+        print("\n🔁 오늘 SP 교체 추천")
+        swaps = recommend_pitcher_swaps(my_team.roster, fa_list)
+        print("\n내 SP — 오늘 등판 없음 (교체 후보):")
+        if not swaps["my_off_today"].empty:
+            print(swaps["my_off_today"].to_string(index=False))
+        else:
+            print("  없음")
+        print("\nFA SP — 오늘 등판 예정 (픽업 후보):")
+        if not swaps["fa_starting_today"].empty:
+            print(swaps["fa_starting_today"].to_string(index=False))
+        else:
+            print("  없음")
+
+        # 📈 중장기 추천
+        print("\n📈 중장기 추천 — 장기적으로 챙길 매물")
+        print("-" * 40)
+        fa_df = rank_free_agents(fa_list, target_cats, daily_only=False)
         if fa_df is not None and not fa_df.empty:
             print(fa_df.to_string(index=False))
 
-        drops = recommend_drops(my_team.roster)
-        if not drops.empty:
-            print("\n드롭 후보:")
-            print(drops.to_string(index=False))
-
         streamers = recommend_streaming_pitchers(fa_list)
         if not streamers.empty:
-            print("\n스트리밍 투수 추천:")
+            print("\n🔥 스트리밍 투수 추천:")
             print(streamers.to_string(index=False))
+
+        # 드롭 후보
+        drops = recommend_drops(my_team.roster)
+        if not drops.empty:
+            print("\n📉 드롭 후보:")
+            print(drops.to_string(index=False))
 
     except Exception as e:
         print(f"FA 분석 실패: {e}")
