@@ -174,7 +174,7 @@ def main():
         # 📈 중장기 추천
         print("\n📈 중장기 추천 — 장기적으로 챙길 매물")
         print("-" * 40)
-        fa_df = rank_free_agents(fa_list, target_cats, daily_only=False)
+        fa_df = rank_free_agents(fa_list, target_cats, daily_only=False, roster=my_team.roster)
         if fa_df is not None and not fa_df.empty:
             print(fa_df.to_string(index=False))
 

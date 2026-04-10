@@ -405,7 +405,7 @@ with tab3:
         st.caption("경기 유무와 관계없이 실력 기준으로 추천합니다.")
 
         if selected_cats:
-            fa_df = rank_free_agents(fa_list, selected_cats, daily_only=False)
+            fa_df = rank_free_agents(fa_list, selected_cats, daily_only=False, roster=my_team.roster)
             st.session_state["fa_df"] = fa_df
             if not fa_df.empty:
                 st.dataframe(fa_df, use_container_width=True, hide_index=True)

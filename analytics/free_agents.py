@@ -106,13 +106,95 @@ def identify_weak_categories(my_stats: dict, opp_stats: dict) -> list[dict]:
     return weaknesses
 
 
+def _score_player(player, target_categories: list[str]) -> float:
+    """타겟 카테고리 기준으로 선수 점수를 계산한다."""
+    is_pitcher = _is_pitcher(player)
+    stats = get_blended_stats(player, is_pitcher=is_pitcher)
+    if not stats:
+        return 0.0
+    score = 0.0
+    for cat in target_categories:
+        val = get_stat_value(stats, cat)
+        if cat in config.LOWER_IS_BETTER:
+            ip_key = STAT_KEY_MAP.get("IP", "OUTS")
+            ip = stats.get(ip_key, 0) or 0
+            if ip > 0:
+                score += (1.0 / max(val, 0.01)) * 10
+        else:
+            score += val
+    return score
+
+
+def _get_roster_by_position(roster: list, target_categories: list[str]) -> dict:
+    """로스터 선수를 포지션별로 그룹화하고 점수를 매긴다.
+
+    Returns:
+        {포지션: [{"name", "score"}, ...]}  (score 오름차순)
+    """
+    pos_map = {}
+    for player in roster:
+        eligible = player.eligibleSlots if hasattr(player, "eligibleSlots") else []
+        positions = [e for e in eligible if e not in ("BE", "IL", "UTIL", "IF", "DH", "1B/3B", "2B/SS")]
+        # LF/CF/RF → OF 통합
+        if any(e in ("LF", "CF", "RF", "OF") for e in eligible):
+            positions = [p for p in positions if p not in ("LF", "CF", "RF")]
+            if "OF" not in positions:
+                positions.append("OF")
+        # P → SP/RP 통합
+        if "P" in positions:
+            positions.remove("P")
+            if "SP" not in positions:
+                positions.append("SP")
+            if "RP" not in positions:
+                positions.append("RP")
+
+        score = _score_player(player, target_categories)
+        injury = getattr(player, "injuryStatus", "ACTIVE")
+        if injury in ("IL", "IL10", "IL60", "FIFTEEN_DAY_DL", "SIXTY_DAY_DL", "TEN_DAY_DL"):
+            score *= 0.5
+
+        for pos in positions:
+            if pos not in pos_map:
+                pos_map[pos] = []
+            pos_map[pos].append({"name": player.name, "score": round(score, 2)})
+
+    # 각 포지션별 점수 오름차순 정렬 (최약체가 먼저)
+    for pos in pos_map:
+        pos_map[pos].sort(key=lambda x: x["score"])
+    return pos_map
+
+
+def _get_fa_primary_position(player) -> str:
+    """FA 선수의 대표 포지션을 반환한다."""
+    pos = player.position if hasattr(player, "position") else ""
+    eligible = player.eligibleSlots if hasattr(player, "eligibleSlots") else []
+    # OF 통합
+    if pos in ("LF", "CF", "RF"):
+        return "OF"
+    if pos in ("SP", "RP", "C", "1B", "2B", "3B", "SS"):
+        return pos
+    # eligible에서 추론
+    for e in eligible:
+        if e in ("SP", "RP", "C", "1B", "2B", "3B", "SS"):
+            return e
+    if any(e in ("LF", "CF", "RF", "OF") for e in eligible):
+        return "OF"
+    return pos
+
+
 def rank_free_agents(fa_list: list, target_categories: list[str], top_n: int = 10,
-                     daily_only: bool = False) -> pd.DataFrame:
+                     daily_only: bool = False, roster: list = None) -> pd.DataFrame:
     """타겟 카테고리 기준으로 FA를 랭킹한다.
 
     Args:
         daily_only: True이면 오늘 경기 있는 선수만, SP는 오늘 선발 등판만 추천
+        roster: 내 로스터 (중장기 추천 시 동 포지션 비교용)
     """
+    # 중장기 추천: 로스터 포지션별 점수 미리 계산
+    roster_pos = None
+    if not daily_only and roster:
+        roster_pos = _get_roster_by_position(roster, target_categories)
+
     rows = []
     for player in fa_list:
         # 데일리 필터: 경기 없으면 제외, SP는 선발 등판 아니면 제외
@@ -152,6 +234,22 @@ def rank_free_agents(fa_list: list, target_categories: list[str], top_n: int = 1
             }
             if daily_only:
                 row["상대팀"] = get_opponent_today(player)
+
+            # 중장기: 동 포지션 최약체 비교
+            if roster_pos:
+                fa_pos = _get_fa_primary_position(player)
+                teammates = roster_pos.get(fa_pos, [])
+                if teammates:
+                    weakest = teammates[0]  # 이미 오름차순
+                    row["팀내최약"] = weakest["name"]
+                    row["최약score"] = weakest["score"]
+                    upgrade = round(score - weakest["score"], 2)
+                    row["업그레이드"] = f"+{upgrade}" if upgrade > 0 else str(upgrade)
+                else:
+                    row["팀내최약"] = "-"
+                    row["최약score"] = "-"
+                    row["업그레이드"] = "신규"
+
             for cat in target_categories:
                 row[cat] = round(cat_values.get(cat, 0), 3)
             rows.append(row)
