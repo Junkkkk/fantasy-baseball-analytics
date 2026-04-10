@@ -414,6 +414,18 @@ def recommend_pitcher_swaps(my_roster: list, fa_list: list) -> dict:
                 "score": round(score, 2),
             })
 
+    # 내 SP 전체 score 계산 (등판 여부 무관, 기준선용)
+    all_my_scores = []
+    for p in my_pitchers:
+        injury = getattr(p, "injuryStatus", "ACTIVE")
+        if injury in ("OUT", "IL", "IL10", "IL60", "FIFTEEN_DAY_DL", "SIXTY_DAY_DL", "TEN_DAY_DL"):
+            continue
+        s = score_pitcher_zscore(p).get("score", 0)
+        all_my_scores.append(s)
+
+    my_sp_avg = round(sum(all_my_scores) / len(all_my_scores), 2) if all_my_scores else 0
+    my_sp_min = round(min(all_my_scores), 2) if all_my_scores else 0
+
     my_off_df = pd.DataFrame(my_off_rows)
     fa_starting_df = pd.DataFrame(fa_rows)
 
@@ -422,7 +434,12 @@ def recommend_pitcher_swaps(my_roster: list, fa_list: list) -> dict:
     if not fa_starting_df.empty:
         fa_starting_df = fa_starting_df.sort_values("score", ascending=False).reset_index(drop=True)
 
-    return {"my_off_today": my_off_df, "fa_starting_today": fa_starting_df}
+    return {
+        "my_off_today": my_off_df,
+        "fa_starting_today": fa_starting_df,
+        "my_sp_avg": my_sp_avg,
+        "my_sp_min": my_sp_min,
+    }
 
 
 def _is_pitcher(player) -> bool:

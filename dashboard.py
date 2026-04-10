@@ -359,11 +359,16 @@ with tab3:
         else:
             target = config.ALL_CATEGORIES
 
-        # 타겟 카테고리 선택
+        # 타겟 카테고리 선택 (타자+투수 균형 있게 기본 선택)
+        if len(target) <= 8:
+            default_cats = target
+        else:
+            # ALL_CATEGORIES에서 타자 3개 + 투수 3개 기본 선택
+            default_cats = target[:3] + [c for c in target if c in config.PITCHING_CATEGORIES][:3]
         selected_cats = st.multiselect(
             "보강할 카테고리 선택",
             config.ALL_CATEGORIES,
-            default=target[:5],
+            default=default_cats,
         )
 
         # ============================================================
@@ -382,6 +387,7 @@ with tab3:
         # 오늘 SP 교체 추천 (전체 목록 + 시즌 기록)
         st.markdown("#### 🔁 오늘 SP 교체 추천")
         swaps = recommend_pitcher_swaps(my_team.roster, fa_list)
+        st.caption(f"📊 내 SP 기준선 — 평균 score: **{swaps['my_sp_avg']}** | 최약 score: **{swaps['my_sp_min']}**")
         swap_col1, swap_col2 = st.columns(2)
         with swap_col1:
             st.markdown("**내 SP — 오늘 등판 없음** (교체 후보)")

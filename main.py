@@ -160,6 +160,7 @@ def main():
         # SP 교체 추천
         print("\n🔁 오늘 SP 교체 추천")
         swaps = recommend_pitcher_swaps(my_team.roster, fa_list)
+        print(f"📊 내 SP 기준선 — 평균 score: {swaps['my_sp_avg']} | 최약 score: {swaps['my_sp_min']}")
         print("\n내 SP — 오늘 등판 없음 (교체 후보):")
         if not swaps["my_off_today"].empty:
             print(swaps["my_off_today"].to_string(index=False))
