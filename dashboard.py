@@ -34,8 +34,7 @@ from analytics.matchup import (
 from analytics.lineup import recommend_lineup, get_injury_alerts
 from analytics.free_agents import (
     identify_weak_categories, rank_free_agents,
-    recommend_drops, recommend_streaming_pitchers,
-    analyze_roster_needs, recommend_pitcher_swaps,
+    recommend_drops, analyze_roster_needs, recommend_pitcher_swaps,
 )
 from analytics.trade import analyze_trade, compare_player_value
 from analytics.blended_stats import get_season_blend_summary
@@ -414,15 +413,34 @@ with tab3:
             fa_df = rank_free_agents(fa_list, selected_cats, daily_only=False, roster=my_team.roster)
             st.session_state["fa_df"] = fa_df
             if not fa_df.empty:
-                st.dataframe(fa_df, use_container_width=True, hide_index=True)
+                # 야수/투수 분리
+                hitting_cats_set = set(config.HITTING_CATEGORIES)
+                pitching_cats_set = set(config.PITCHING_CATEGORIES)
+
+                def _is_pitcher_row(row):
+                    pos = row.get("position", "")
+                    return pos in ("SP", "RP", "P")
+
+                hitter_mask = ~fa_df.apply(_is_pitcher_row, axis=1)
+                pitcher_mask = fa_df.apply(_is_pitcher_row, axis=1)
+
+                lt_col1, lt_col2 = st.columns(2)
+                with lt_col1:
+                    st.markdown("#### 야수")
+                    hitter_df = fa_df[hitter_mask]
+                    if not hitter_df.empty:
+                        st.dataframe(hitter_df.reset_index(drop=True), use_container_width=True, hide_index=True)
+                    else:
+                        st.caption("추천할 야수 FA가 없습니다.")
+                with lt_col2:
+                    st.markdown("#### 투수")
+                    pitcher_df = fa_df[pitcher_mask]
+                    if not pitcher_df.empty:
+                        st.dataframe(pitcher_df.reset_index(drop=True), use_container_width=True, hide_index=True)
+                    else:
+                        st.caption("추천할 투수 FA가 없습니다.")
             else:
                 st.info("추천할 FA가 없습니다.")
-
-        # 스트리밍 투수
-        st.markdown("#### 🔥 스트리밍 투수 추천")
-        streamers = recommend_streaming_pitchers(fa_list)
-        if not streamers.empty:
-            st.dataframe(streamers, use_container_width=True, hide_index=True)
 
         st.divider()
 

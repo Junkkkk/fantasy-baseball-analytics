@@ -18,8 +18,7 @@ from analytics.matchup import (
 from analytics.lineup import recommend_lineup, get_injury_alerts
 from analytics.free_agents import (
     identify_weak_categories, rank_free_agents,
-    recommend_drops, recommend_streaming_pitchers,
-    analyze_roster_needs, recommend_pitcher_swaps,
+    recommend_drops, analyze_roster_needs, recommend_pitcher_swaps,
 )
 from analytics.scoring import compute_league_norms
 from analytics.schedule import load_today_schedule, get_today_summary
@@ -177,12 +176,16 @@ def main():
         print("-" * 40)
         fa_df = rank_free_agents(fa_list, target_cats, daily_only=False, roster=my_team.roster)
         if fa_df is not None and not fa_df.empty:
-            print(fa_df.to_string(index=False))
-
-        streamers = recommend_streaming_pitchers(fa_list)
-        if not streamers.empty:
-            print("\n🔥 스트리밍 투수 추천:")
-            print(streamers.to_string(index=False))
+            hitter_mask = ~fa_df["position"].isin(["SP", "RP", "P"])
+            pitcher_mask = fa_df["position"].isin(["SP", "RP", "P"])
+            hitter_df = fa_df[hitter_mask]
+            pitcher_df = fa_df[pitcher_mask]
+            if not hitter_df.empty:
+                print("\n[야수]")
+                print(hitter_df.to_string(index=False))
+            if not pitcher_df.empty:
+                print("\n[투수]")
+                print(pitcher_df.to_string(index=False))
 
         # 드롭 후보
         drops = recommend_drops(my_team.roster)
