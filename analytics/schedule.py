@@ -1,7 +1,7 @@
 """MLB 경기 스케줄, 상대 선발투수, 구장 팩터 모듈."""
 
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ESPN proTeam 약칭 → MLB API 팀명 매핑
 ESPN_TO_MLB = {
@@ -327,6 +327,213 @@ def get_today_summary() -> dict:
         "teams_off": sorted(set(ESPN_TO_MLB.keys()) - _today_teams),
         "games": _today_games,
     }
+
+
+def get_rotation_forecast(roster: list, days_ahead: int = 7) -> list[dict]:
+    """내 팀 SP들의 다음 등판 예측.
+
+    1) MLB API에서 향후 N일간 발표된 probable pitcher 확인
+    2) 미발표 SP는 마지막 등판일 기준 5일 로테이션으로 추정
+
+    Returns:
+        [{name, proTeam, next_start, source("발표"/"추정"), opponent, days_until}, ...]
+    """
+    if not _schedule_loaded:
+        load_today_schedule()
+
+    # 내 팀 SP만 추출
+    my_sps = []
+    for p in roster:
+        pos = p.position or ""
+        eligible = p.eligibleSlots if hasattr(p, "eligibleSlots") else []
+        if pos == "SP" or ("SP" in eligible and "RP" not in eligible):
+            injury = getattr(p, "injuryStatus", "ACTIVE")
+            if injury in ("OUT", "IL", "IL10", "IL60", "FIFTEEN_DAY_DL",
+                          "SIXTY_DAY_DL", "TEN_DAY_DL"):
+                continue
+            my_sps.append(p)
+
+    if not my_sps:
+        return []
+
+    today = datetime.now()
+    today_str = today.strftime("%Y-%m-%d")
+    end_date = (today + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+
+    # 향후 N일간 probable pitcher 가져오기
+    upcoming_probables = {}  # {pitcher_name_lower: [{date, opponent}, ...]}
+    try:
+        url = (
+            f"https://statsapi.mlb.com/api/v1/schedule"
+            f"?startDate={today_str}&endDate={end_date}"
+            f"&sportId=1&hydrate=probablePitcher"
+        )
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
+
+        for date_entry in data.get("dates", []):
+            game_date = date_entry.get("date", "")
+            for game in date_entry.get("games", []):
+                away_info = game["teams"]["away"]
+                home_info = game["teams"]["home"]
+                away_name = away_info["team"]["name"]
+                home_name = home_info["team"]["name"]
+                away_espn = MLB_TO_ESPN.get(away_name, "")
+                home_espn = MLB_TO_ESPN.get(home_name, "")
+
+                # 원정 선발투수
+                away_pp = away_info.get("probablePitcher", {})
+                if away_pp:
+                    pp_name = (away_pp.get("fullName") or "").lower().strip()
+                    if pp_name:
+                        if pp_name not in upcoming_probables:
+                            upcoming_probables[pp_name] = []
+                        upcoming_probables[pp_name].append({
+                            "date": game_date,
+                            "opponent": home_espn or home_name,
+                            "team": away_espn,
+                        })
+
+                # 홈 선발투수
+                home_pp = home_info.get("probablePitcher", {})
+                if home_pp:
+                    pp_name = (home_pp.get("fullName") or "").lower().strip()
+                    if pp_name:
+                        if pp_name not in upcoming_probables:
+                            upcoming_probables[pp_name] = []
+                        upcoming_probables[pp_name].append({
+                            "date": game_date,
+                            "opponent": away_espn or away_name,
+                            "team": home_espn,
+                        })
+    except Exception as e:
+        print(f"[경고] 향후 스케줄 로드 실패: {e}")
+
+    # 각 SP별 다음 등판 찾기
+    results = []
+    for p in my_sps:
+        player_name = p.name.lower().strip()
+        pro_team = getattr(p, "proTeam", "")
+
+        # 1) 발표된 probable pitcher에서 찾기
+        if player_name in upcoming_probables:
+            starts = upcoming_probables[player_name]
+            # 오늘 이후 가장 빠른 등판
+            future_starts = [s for s in starts if s["date"] >= today_str]
+            if future_starts:
+                future_starts.sort(key=lambda x: x["date"])
+                next_s = future_starts[0]
+                next_date = datetime.strptime(next_s["date"], "%Y-%m-%d")
+                days_until = (next_date - today).days
+                results.append({
+                    "name": p.name,
+                    "proTeam": pro_team,
+                    "next_start": next_s["date"],
+                    "opponent": next_s["opponent"],
+                    "days_until": days_until,
+                    "source": "발표",
+                })
+                continue
+
+        # 2) 발표 안 됨 → 마지막 등판에서 5일 로테이션 추정
+        last_start = _get_last_start_date(p, pro_team)
+        if last_start:
+            # 5일 로테이션: 마지막 등판 + 5일씩
+            estimated = last_start + timedelta(days=5)
+            while estimated.strftime("%Y-%m-%d") < today_str:
+                estimated += timedelta(days=5)
+            # 최대 days_ahead 이내
+            if (estimated - today).days <= days_ahead:
+                days_until = (estimated - today).days
+                # 그날 팀 경기가 있는지 확인은 생략 (추정이므로)
+                results.append({
+                    "name": p.name,
+                    "proTeam": pro_team,
+                    "next_start": estimated.strftime("%Y-%m-%d"),
+                    "opponent": "미정",
+                    "days_until": days_until,
+                    "source": "추정(5일)",
+                })
+                continue
+
+        # 정보 없음
+        results.append({
+            "name": p.name,
+            "proTeam": pro_team,
+            "next_start": "미정",
+            "opponent": "미정",
+            "days_until": 99,
+            "source": "정보없음",
+        })
+
+    results.sort(key=lambda x: x["days_until"])
+    return results
+
+
+def _get_last_start_date(player, pro_team: str):
+    """MLB API에서 투수의 마지막 선발 등판일을 가져온다."""
+    # ESPN player에서 MLB ID 추출 시도
+    # player name으로 팀 로스터에서 찾기
+    year = datetime.now().year
+    team_mlb_name = ESPN_TO_MLB.get(pro_team, "")
+    if not team_mlb_name:
+        return None
+
+    player_name_lower = player.name.lower().strip()
+
+    try:
+        # MLB API에서 팀 로스터 가져와서 선수 ID 찾기
+        # 먼저 팀 ID 찾기
+        teams_url = f"https://statsapi.mlb.com/api/v1/teams?sportId=1&season={year}"
+        resp = requests.get(teams_url, timeout=5)
+        teams_data = resp.json()
+        team_id = None
+        for t in teams_data.get("teams", []):
+            if t["name"] == team_mlb_name:
+                team_id = t["id"]
+                break
+
+        if not team_id:
+            return None
+
+        # 팀 로스터에서 선수 찾기
+        roster_url = f"https://statsapi.mlb.com/api/v1/teams/{team_id}/roster?season={year}"
+        resp = requests.get(roster_url, timeout=5)
+        roster_data = resp.json()
+        player_id = None
+        for entry in roster_data.get("roster", []):
+            person = entry.get("person", {})
+            if (person.get("fullName") or "").lower().strip() == player_name_lower:
+                player_id = person["id"]
+                break
+
+        if not player_id:
+            return None
+
+        # 게임 로그에서 마지막 선발 등판 찾기
+        log_url = (
+            f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
+            f"?stats=gameLog&season={year}&group=pitching"
+        )
+        resp = requests.get(log_url, timeout=5)
+        log_data = resp.json()
+
+        for stat_group in log_data.get("stats", []):
+            splits = stat_group.get("splits", [])
+            # 최신순으로 정렬
+            splits.sort(key=lambda x: x.get("date", ""), reverse=True)
+            for split in splits:
+                stat = split.get("stat", {})
+                # 선발 등판: gamesStarted > 0
+                if int(stat.get("gamesStarted", 0)) > 0:
+                    date_str = split.get("date", "")
+                    if date_str:
+                        return datetime.strptime(date_str, "%Y-%m-%d")
+
+    except Exception:
+        pass
+
+    return None
 
 
 def is_loaded() -> bool:

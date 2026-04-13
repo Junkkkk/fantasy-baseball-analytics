@@ -329,3 +329,50 @@ def estimate_remaining_stats(roster: list, games_remaining: int) -> dict:
             per_game[cat] += val / games
 
     return {cat: val * games_remaining for cat, val in per_game.items()}
+
+
+def project_weekly_totals(my_stats: dict, opp_stats: dict,
+                          my_roster: list, opp_roster: list) -> pd.DataFrame:
+    """현재 스탯 + 남은 경기 예상치를 합산하여 이번 주 최종 예상 성적을 보여준다.
+
+    Returns:
+        DataFrame: category, my_current, my_projected, opp_current, opp_projected, projected_result
+    """
+    progress = calculate_matchup_progress()
+    # 남은 일수 기반 잔여 경기 추정 (팀당 하루 평균 ~1경기)
+    days_remaining = max(1, round((1.0 - progress) * 7))
+
+    my_remaining = estimate_remaining_stats(my_roster, days_remaining)
+    opp_remaining = estimate_remaining_stats(opp_roster, days_remaining)
+
+    rows = []
+    for cat in config.ALL_CATEGORIES:
+        my_cur = my_stats.get(cat, 0)
+        opp_cur = opp_stats.get(cat, 0)
+
+        if cat in config.RATIO_STATS:
+            # 비율 스탯은 현재값 유지 (경기가 쌓이면 자연히 수렴)
+            my_proj = my_cur
+            opp_proj = opp_cur
+        else:
+            my_proj = my_cur + my_remaining.get(cat, 0)
+            opp_proj = opp_cur + opp_remaining.get(cat, 0)
+
+        # 예상 승패
+        if cat in config.LOWER_IS_BETTER:
+            result = "WIN" if my_proj <= opp_proj else "LOSE"
+        else:
+            result = "WIN" if my_proj >= opp_proj else "LOSE"
+        if abs(my_proj - opp_proj) < 0.001:
+            result = "TIE"
+
+        rows.append({
+            "category": cat,
+            "현재(나)": round(my_cur, 3),
+            "예상(나)": round(my_proj, 3) if cat not in config.RATIO_STATS else "-",
+            "현재(상대)": round(opp_cur, 3),
+            "예상(상대)": round(opp_proj, 3) if cat not in config.RATIO_STATS else "-",
+            "예상결과": result,
+        })
+
+    return pd.DataFrame(rows)

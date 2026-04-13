@@ -29,7 +29,7 @@ from espn_client import (
 )
 from analytics.matchup import (
     extract_category_stats, compare_categories, get_strategy_recommendations,
-    calculate_matchup_progress,
+    calculate_matchup_progress, project_weekly_totals,
 )
 from analytics.lineup import recommend_lineup, get_injury_alerts
 from analytics.free_agents import (
@@ -39,7 +39,7 @@ from analytics.free_agents import (
 from analytics.trade import analyze_trade, compare_player_value
 from analytics.blended_stats import get_season_blend_summary
 from analytics.scoring import compute_league_norms, get_norms_summary, is_norms_loaded
-from analytics.schedule import load_today_schedule, get_today_summary
+from analytics.schedule import load_today_schedule, get_today_summary, get_rotation_forecast
 from report.excel import generate_report
 
 
@@ -49,6 +49,18 @@ from report.excel import generate_report
 def _highlight_result(row):
     """매치업 결과에 따른 행 색상."""
     result = row.get("result", "")
+    if result == "WIN":
+        return ["background-color: #c6efce"] * len(row)
+    elif result == "LOSE":
+        return ["background-color: #ffc7ce"] * len(row)
+    elif result == "TIE":
+        return ["background-color: #ffeb9c"] * len(row)
+    return [""] * len(row)
+
+
+def _highlight_result_projected(row):
+    """예상 결과에 따른 행 색상."""
+    result = row.get("예상결과", "")
     if result == "WIN":
         return ["background-color: #c6efce"] * len(row)
     elif result == "LOSE":
@@ -233,6 +245,32 @@ with tab1:
                         icon = {"집중": "🔵", "수비": "🟢", "포기": "🔴", "요약": "📌", "관망": "⏳"}.get(rec["action"], "⚪")
                         st.markdown(f"{icon} **[{rec['action']}] {rec['category']}**: {rec['reason']}")
 
+                    # 이번 주 예상 성적
+                    st.subheader("📈 이번 주 예상 최종 성적")
+                    st.caption(f"매치업 진행도: {progress:.0%} | 남은 일수: {max(1, round((1-progress)*7))}일")
+                    try:
+                        opp_team_obj = opponent
+                        proj_df = project_weekly_totals(
+                            my_stats, opp_stats,
+                            my_team.roster, opp_team_obj.roster,
+                        )
+                        proj_wins = len(proj_df[proj_df["예상결과"] == "WIN"])
+                        proj_losses = len(proj_df[proj_df["예상결과"] == "LOSE"])
+                        proj_ties = len(proj_df[proj_df["예상결과"] == "TIE"])
+
+                        pcol1, pcol2, pcol3 = st.columns(3)
+                        pcol1.metric("예상 승", proj_wins, delta=proj_wins - wins)
+                        pcol2.metric("예상 패", proj_losses, delta=proj_losses - losses, delta_color="inverse")
+                        pcol3.metric("예상 무", proj_ties)
+
+                        st.dataframe(
+                            proj_df.style.apply(_highlight_result_projected, axis=1),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    except Exception as e:
+                        st.caption(f"예상 성적 계산 실패: {e}")
+
                     # 엑셀 다운로드 (매치업)
                     st.session_state["matchup_df"] = comparison
                     st.session_state["strategy"] = strategy
@@ -302,6 +340,29 @@ with tab2:
         st.subheader("⚠️ 부상 알림")
         for inj in injuries:
             st.warning(f"**{inj['name']}** ({inj['position']}) - {inj['injury_status']} → {inj['action']}")
+
+    # 선발 로테이션 예측
+    st.subheader("📅 선발 로테이션 예측 (향후 7일)")
+    try:
+        rotation = get_rotation_forecast(my_team.roster, days_ahead=7)
+        if rotation:
+            rot_rows = []
+            for r in rotation:
+                source_icon = {"발표": "✅", "추정(5일)": "🔄", "정보없음": "❓"}.get(r["source"], "❓")
+                days_text = f"D-{r['days_until']}" if r["days_until"] < 99 else "-"
+                rot_rows.append({
+                    "선수": r["name"],
+                    "팀": r["proTeam"],
+                    "다음 등판": r["next_start"],
+                    "상대": r["opponent"],
+                    "남은일": days_text,
+                    "출처": f"{source_icon} {r['source']}",
+                })
+            st.dataframe(pd.DataFrame(rot_rows), use_container_width=True, hide_index=True)
+        else:
+            st.caption("로스터에 활성 SP가 없습니다.")
+    except Exception as e:
+        st.caption(f"로테이션 예측 로드 실패: {e}")
 
 
 # ============================================================
