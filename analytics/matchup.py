@@ -7,28 +7,38 @@ import config
 
 
 # ESPN API breakdown 키 매핑
-# breakdown dict에서 사용하는 문자열 키
+# breakdown dict에서 사용하는 문자열 키 (13개 카테고리 리그)
 STAT_KEY_MAP = {
-    # 타자
-    "R": "R",
+    # 타자 (스코어링 7개)
+    "H": "H",
     "HR": "HR",
     "RBI": "RBI",
     "SB": "SB",
+    "OPS": "OPS",
+    "GDP": "GDP",
+    "E": "E",
+    # 투수 (스코어링 6개)
+    "OUTS": "OUTS",     # 이닝 카운팅 (IP*3)
+    "W": "W",
+    "K": "K",
+    "SVHD": "SVHD",     # Saves + Holds
+    "K/BB": "K/BB",
+    "ERA": "ERA",
+    # 참조용 (계산/표시)
     "AVG": "AVG",
-    "H": "H",
+    "R": "R",
     "AB": "AB",
     "G": "G",
-    # 투수
-    "K": "K",
-    "W": "W",
     "SV": "SV",
-    "HD": "HLD",       # ESPN은 'HLD'로 표기
-    "ERA": "ERA",
+    "HD": "HLD",
     "WHIP": "WHIP",
     "ER": "ER",
-    "IP": "OUTS",       # ESPN은 OUTS로 반환 (IP = OUTS / 3)
-    "BB": "P_BB",       # 투수 볼넷
-    "HA": "P_H",        # 투수 피안타
+    "IP": "OUTS",
+    "BB": "P_BB",
+    "HA": "P_H",
+    "B_BB": "B_BB",     # 타자 볼넷 (OPS 계산용)
+    "SF": "SF",
+    "HBP": "HBP",
 }
 
 # 하위 호환: 기존 코드에서 STAT_ID_MAP을 import하는 곳 대응
@@ -109,34 +119,58 @@ def extract_category_stats(box_score, team_side: str) -> dict:
     totals = {cat: 0.0 for cat in config.ALL_CATEGORIES}
 
     total_h, total_ab = 0, 0
+    total_bb_h, total_hbp, total_sf = 0, 0, 0  # OPS 분모용
+    total_2b, total_3b, total_hr_h = 0, 0, 0    # SLG용
     total_er, total_outs = 0.0, 0.0
-    total_bb_p, total_ha = 0, 0
+    total_bb_p, total_k_p = 0, 0
 
     for player in lineup:
         bd = get_player_breakdown(player)
         if not bd:
             continue
 
-        # 카운팅 스탯 누적
-        for cat in ["R", "HR", "RBI", "SB"]:
+        # 타자 카운팅 (H, HR, RBI, SB, GDP, E)
+        for cat in ["H", "HR", "RBI", "SB", "GDP", "E"]:
             totals[cat] += get_stat_value(bd, cat)
 
-        for cat in ["K", "W", "SV", "HD"]:
+        # 투수 카운팅 (OUTS, W, K, SVHD)
+        for cat in ["OUTS", "W", "K"]:
             totals[cat] += get_stat_value(bd, cat)
+        # SVHD = SV + HLD (원본 SVHD 키가 있으면 사용, 없으면 합산)
+        svhd_direct = get_stat_value(bd, "SVHD")
+        if svhd_direct > 0:
+            totals["SVHD"] += svhd_direct
+        else:
+            totals["SVHD"] += get_stat_value(bd, "SV") + get_stat_value(bd, "HD")
 
         # 비율 계산용
         total_h += get_stat_value(bd, "H")
         total_ab += get_stat_value(bd, "AB")
+        total_bb_h += get_stat_value(bd, "B_BB")
+        total_hbp += get_stat_value(bd, "HBP")
+        total_sf += get_stat_value(bd, "SF")
+        total_2b += get_stat_value(bd, "2B") if "2B" in bd else 0
+        total_3b += get_stat_value(bd, "3B") if "3B" in bd else 0
+        total_hr_h += get_stat_value(bd, "HR")
         total_er += get_stat_value(bd, "ER")
         total_outs += get_stat_value(bd, "IP")  # 실제로는 OUTS
         total_bb_p += get_stat_value(bd, "BB")
-        total_ha += get_stat_value(bd, "HA")
+        total_k_p += get_stat_value(bd, "K")
 
-    # 비율 스탯 계산
-    totals["AVG"] = total_h / total_ab if total_ab > 0 else 0.0
+    # OPS = OBP + SLG
+    obp_denom = total_ab + total_bb_h + total_hbp + total_sf
+    obp = (total_h + total_bb_h + total_hbp) / obp_denom if obp_denom > 0 else 0.0
+    total_1b = total_h - total_2b - total_3b - total_hr_h
+    tb = total_1b + 2 * total_2b + 3 * total_3b + 4 * total_hr_h
+    slg = tb / total_ab if total_ab > 0 else 0.0
+    totals["OPS"] = obp + slg
+
+    # ERA = ER*9 / IP
     total_ip = total_outs / 3.0 if total_outs > 0 else 0.0
     totals["ERA"] = (total_er * 9) / total_ip if total_ip > 0 else 0.0
-    totals["WHIP"] = (total_bb_p + total_ha) / total_ip if total_ip > 0 else 0.0
+
+    # K/BB = 탈삼진 / 볼넷
+    totals["K/BB"] = total_k_p / total_bb_p if total_bb_p > 0 else (total_k_p if total_k_p > 0 else 0.0)
 
     return totals
 
@@ -303,10 +337,14 @@ def calculate_matchup_progress(matchup_period: int = None) -> float:
 
 
 def _get_threshold(category: str) -> float:
-    """카테고리별 '접전' 판단 임계값."""
+    """카테고리별 '접전' 판단 임계값 (13개 리그)."""
     thresholds = {
-        "R": 5, "HR": 2, "RBI": 5, "SB": 2, "AVG": 0.010,
-        "K": 10, "W": 1, "SV": 1, "HD": 1, "ERA": 0.50, "WHIP": 0.05,
+        # 타자
+        "H": 5, "HR": 2, "RBI": 5, "SB": 2,
+        "OPS": 0.020, "GDP": 1, "E": 1,
+        # 투수
+        "OUTS": 9, "W": 1, "K": 10, "SVHD": 1,
+        "K/BB": 0.30, "ERA": 0.50,
     }
     return thresholds.get(category, 3)
 

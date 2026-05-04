@@ -18,14 +18,39 @@ ESPN_S2 = ""
 SWID = ""
 
 # ============================================================
-# H2H Categories 설정 (수정 불필요)
+# H2H Categories 설정 (리그: 13개 카테고리)
 # ============================================================
 
-HITTING_CATEGORIES = ["R", "HR", "RBI", "SB", "AVG"]
-PITCHING_CATEGORIES = ["K", "W", "SV", "HD", "ERA", "WHIP"]
+# 타자 (7): H, HR, RBI, SB, OPS, GDP(↓), E(↓)
+HITTING_CATEGORIES = ["H", "HR", "RBI", "SB", "OPS", "GDP", "E"]
+
+# 투수 (6): OUTS, W, K, SVHD, K/BB, ERA(↓)
+PITCHING_CATEGORIES = ["OUTS", "W", "K", "SVHD", "K/BB", "ERA"]
+
 ALL_CATEGORIES = HITTING_CATEGORIES + PITCHING_CATEGORIES
 
-LOWER_IS_BETTER = {"ERA", "WHIP"}
-RATIO_STATS = {"AVG", "ERA", "WHIP"}
+# 낮을수록 좋은 카테고리
+LOWER_IS_BETTER = {"ERA", "GDP", "E"}
+
+# 비율/평균 스탯 (경기당 누적이 아닌 평균값)
+RATIO_STATS = {"OPS", "ERA", "K/BB"}
+
 RECENT_DAYS = [7, 14, 30]
 FA_SIZE = 100
+
+# ESPN statId -> 카테고리명 매핑 (13개 스코어링 카테고리)
+ESPN_STAT_ID_MAP = {
+    1: "H",       # Hits
+    5: "HR",      # Home Runs
+    18: "OPS",    # On-base Plus Slugging
+    21: "RBI",    # Runs Batted In
+    23: "SB",     # Stolen Bases
+    26: "GDP",    # Grounded into Double Play (↓)
+    72: "E",      # Errors (↓)
+    34: "OUTS",   # Outs recorded (= IP * 3)
+    47: "ERA",    # Earned Run Average (↓)
+    48: "K",      # Strikeouts (pitching)
+    53: "W",      # Wins
+    82: "K/BB",   # Strikeout to Walk ratio
+    83: "SVHD",   # Saves + Holds
+}

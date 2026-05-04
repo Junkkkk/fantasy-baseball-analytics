@@ -109,11 +109,21 @@ def compare_player_value(player_a, player_b) -> pd.DataFrame:
 
 
 def _sum_category_stats(players: list) -> dict:
-    """선수 리스트의 카테고리별 스탯을 합산한다."""
+    """선수 리스트의 카테고리별 스탯을 합산한다 (13개 카테고리 리그)."""
     totals = {cat: 0.0 for cat in config.ALL_CATEGORIES}
+
+    # OPS 계산용
     total_h, total_ab = 0, 0
+    total_bb_h, total_hbp, total_sf = 0, 0, 0
+    total_2b, total_3b, total_hr_h = 0, 0, 0
+    # 투수 비율 계산용
     total_er, total_outs = 0.0, 0.0
-    total_bb_p, total_ha = 0, 0
+    total_bb_p, total_k_p = 0, 0
+    # OPS/K-BB 가중평균용 (실제 선수 OPS를 타석 가중 평균)
+    ops_weighted_sum = 0.0
+    ops_ab_sum = 0
+    kbb_weighted_sum = 0.0
+    kbb_outs_sum = 0.0
 
     for player in players:
         is_pitcher = _is_pitcher(player)
@@ -121,23 +131,72 @@ def _sum_category_stats(players: list) -> dict:
         if not stats:
             continue
 
-        for cat in ["R", "HR", "RBI", "SB"]:
-            totals[cat] += get_stat_value(stats, cat)
+        if is_pitcher:
+            # 투수 카운팅
+            for cat in ["OUTS", "W", "K"]:
+                totals[cat] += get_stat_value(stats, cat)
+            svhd = get_stat_value(stats, "SVHD")
+            if svhd <= 0:
+                svhd = get_stat_value(stats, "SV") + get_stat_value(stats, "HD")
+            totals["SVHD"] += svhd
 
-        for cat in ["K", "W", "SV", "HD"]:
-            totals[cat] += get_stat_value(stats, cat)
+            # 비율 계산용
+            p_outs = stats.get("OUTS", 0) or 0
+            total_er += get_stat_value(stats, "ER")
+            total_outs += p_outs
+            total_bb_p += get_stat_value(stats, "BB")
+            total_k_p += get_stat_value(stats, "K")
 
-        total_h += get_stat_value(stats, "H")
-        total_ab += get_stat_value(stats, "AB")
-        total_er += get_stat_value(stats, "ER")
-        total_outs += stats.get("OUTS", 0) or 0
-        total_bb_p += get_stat_value(stats, "BB")
-        total_ha += get_stat_value(stats, "HA")
+            # K/BB 가중치
+            kbb = get_stat_value(stats, "K/BB")
+            if p_outs > 0 and kbb > 0:
+                kbb_weighted_sum += kbb * p_outs
+                kbb_outs_sum += p_outs
+        else:
+            # 타자 카운팅
+            for cat in ["H", "HR", "RBI", "SB", "GDP", "E"]:
+                totals[cat] += get_stat_value(stats, cat)
 
-    totals["AVG"] = total_h / total_ab if total_ab > 0 else 0.0
+            # OPS 계산용
+            ab = get_stat_value(stats, "AB")
+            total_h += get_stat_value(stats, "H")
+            total_ab += ab
+            total_bb_h += get_stat_value(stats, "B_BB")
+            total_hbp += get_stat_value(stats, "HBP")
+            total_sf += get_stat_value(stats, "SF")
+            total_2b += stats.get("2B", 0) or 0
+            total_3b += stats.get("3B", 0) or 0
+            total_hr_h += get_stat_value(stats, "HR")
+
+            # OPS 가중치 (선수 자체 OPS 값이 있으면 타석 가중)
+            ops = get_stat_value(stats, "OPS")
+            if ab > 0 and ops > 0:
+                ops_weighted_sum += ops * ab
+                ops_ab_sum += ab
+
+    # OPS: 선수 OPS의 AB 가중 평균 (개별 프로젝션 OPS 반영)
+    if ops_ab_sum > 0:
+        totals["OPS"] = ops_weighted_sum / ops_ab_sum
+    else:
+        # Fallback: 원시 스탯으로 계산
+        obp_denom = total_ab + total_bb_h + total_hbp + total_sf
+        obp = (total_h + total_bb_h + total_hbp) / obp_denom if obp_denom > 0 else 0.0
+        total_1b = total_h - total_2b - total_3b - total_hr_h
+        tb = total_1b + 2 * total_2b + 3 * total_3b + 4 * total_hr_h
+        slg = tb / total_ab if total_ab > 0 else 0.0
+        totals["OPS"] = obp + slg
+
+    # ERA
     total_ip = total_outs / 3.0 if total_outs > 0 else 0.0
     totals["ERA"] = (total_er * 9) / total_ip if total_ip > 0 else 0.0
-    totals["WHIP"] = (total_bb_p + total_ha) / total_ip if total_ip > 0 else 0.0
+
+    # K/BB: 선수 K/BB의 OUTS 가중 평균
+    if kbb_outs_sum > 0:
+        totals["K/BB"] = kbb_weighted_sum / kbb_outs_sum
+    elif total_bb_p > 0:
+        totals["K/BB"] = total_k_p / total_bb_p
+    else:
+        totals["K/BB"] = 0.0
 
     return totals
 

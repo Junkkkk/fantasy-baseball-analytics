@@ -326,10 +326,10 @@ def recommend_streaming_pitchers(fa_list: list, top_n: int = 5) -> pd.DataFrame:
 
         k = get_stat_value(stats, "K")
         era = get_stat_value(stats, "ERA")
-        whip = get_stat_value(stats, "WHIP")
+        kbb = get_stat_value(stats, "K/BB")
         w = get_stat_value(stats, "W")
 
-        score = k * 0.5 + w * 3 + (1 / max(era, 0.01)) * 20 + (1 / max(whip, 0.01)) * 15
+        score = k * 0.5 + w * 3 + (1 / max(era, 0.01)) * 20 + kbb * 5
 
         rows.append({
             "name": player.name,
@@ -339,7 +339,7 @@ def recommend_streaming_pitchers(fa_list: list, top_n: int = 5) -> pd.DataFrame:
             "K": int(k),
             "W": int(w),
             "ERA": round(era, 2),
-            "WHIP": round(whip, 2),
+            "K/BB": round(kbb, 2),
             "score": round(score, 2),
         })
 
@@ -375,18 +375,18 @@ def recommend_pitcher_swaps(my_roster: list, fa_list: list) -> dict:
         if injury in ("OUT", "IL", "IL10", "IL60", "FIFTEEN_DAY_DL", "SIXTY_DAY_DL", "TEN_DAY_DL"):
             continue
         if not is_probable_starter_today(p):
-            stats = get_blended_stats(p, is_pitcher=True)
-            outs = (stats or {}).get("OUTS", 0) or 0
+            stats = get_blended_stats(p, is_pitcher=True) or {}
+            outs = stats.get("OUTS", 0) or 0
             ip = outs / 3.0 if outs > 0 else 0
             score = score_pitcher_zscore(p).get("score", 0)
             my_off_rows.append({
                 "name": p.name,
                 "proTeam": getattr(p, "proTeam", ""),
                 "IP": round(ip, 1),
-                "K": int(get_stat_value(stats or {}, "K")),
-                "W": int(get_stat_value(stats or {}, "W")),
-                "ERA": round(get_stat_value(stats or {}, "ERA"), 2),
-                "WHIP": round(get_stat_value(stats or {}, "WHIP"), 2),
+                "K": int(get_stat_value(stats, "K")),
+                "W": int(get_stat_value(stats, "W")),
+                "ERA": round(get_stat_value(stats, "ERA"), 2),
+                "K/BB": round(get_stat_value(stats, "K/BB"), 2),
                 "score": round(score, 2),
             })
 
@@ -398,8 +398,8 @@ def recommend_pitcher_swaps(my_roster: list, fa_list: list) -> dict:
         if pos != "SP" and "SP" not in eligible:
             continue
         if is_probable_starter_today(p):
-            stats = get_blended_stats(p, is_pitcher=True)
-            outs = (stats or {}).get("OUTS", 0) or 0
+            stats = get_blended_stats(p, is_pitcher=True) or {}
+            outs = stats.get("OUTS", 0) or 0
             ip = outs / 3.0 if outs > 0 else 0
             score = score_pitcher_zscore(p).get("score", 0)
             fa_rows.append({
@@ -407,10 +407,10 @@ def recommend_pitcher_swaps(my_roster: list, fa_list: list) -> dict:
                 "proTeam": getattr(p, "proTeam", ""),
                 "상대팀": get_opponent_today(p),
                 "IP": round(ip, 1),
-                "K": int(get_stat_value(stats or {}, "K")),
-                "W": int(get_stat_value(stats or {}, "W")),
-                "ERA": round(get_stat_value(stats or {}, "ERA"), 2),
-                "WHIP": round(get_stat_value(stats or {}, "WHIP"), 2),
+                "K": int(get_stat_value(stats, "K")),
+                "W": int(get_stat_value(stats, "W")),
+                "ERA": round(get_stat_value(stats, "ERA"), 2),
+                "K/BB": round(get_stat_value(stats, "K/BB"), 2),
                 "score": round(score, 2),
             })
 
@@ -457,9 +457,13 @@ def _is_sp(player) -> bool:
 
 
 def _close_threshold(category: str) -> float:
-    """역전 가능 판단 임계값."""
+    """역전 가능 판단 임계값 (13개 카테고리 리그)."""
     thresholds = {
-        "R": 8, "HR": 3, "RBI": 8, "SB": 3, "AVG": 0.015,
-        "K": 15, "W": 2, "SV": 2, "HD": 2, "ERA": 0.75, "WHIP": 0.08,
+        # 타자
+        "H": 8, "HR": 3, "RBI": 8, "SB": 3,
+        "OPS": 0.030, "GDP": 2, "E": 2,
+        # 투수
+        "OUTS": 15, "W": 2, "K": 15, "SVHD": 2,
+        "K/BB": 0.50, "ERA": 0.75,
     }
     return thresholds.get(category, 5)

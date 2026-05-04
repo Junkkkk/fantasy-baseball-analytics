@@ -5,7 +5,11 @@
 
 점수 = Σ z-score(카테고리) × 매치업_가중치
   - z-score = (선수값 - 리그평균) / 리그표준편차
-  - ERA/WHIP는 낮을수록 좋으므로 부호 반전
+  - ERA/GDP/E는 낮을수록 좋으므로 부호 반전
+
+리그 카테고리 (13개):
+  타자: H, HR, RBI, SB, OPS, GDP(↓), E(↓)
+  투수: OUTS, W, K, SVHD, K/BB, ERA(↓)
 """
 
 import numpy as np
@@ -80,7 +84,7 @@ def compute_league_norms(league):
 def z_score(value: float, category: str) -> float:
     """카테고리 값의 z-score를 계산한다.
 
-    ERA/WHIP는 낮을수록 좋으므로 부호를 반전한다.
+    ERA/GDP/E는 낮을수록 좋으므로 부호를 반전한다.
     """
     if category not in _league_norms:
         return 0.0
@@ -159,8 +163,8 @@ def score_pitcher_zscore(player, matchup_context: dict = None) -> dict:
     """Z-score 기반 투수 점수를 계산한다.
 
     SP와 RP를 구분하여 관련 카테고리만 평가:
-      - SP: K, W, ERA, WHIP (SV/HD 제외)
-      - RP: K, SV, HD, ERA, WHIP (W 제외)
+      - SP: OUTS, W, K, K/BB, ERA (SVHD 제외)
+      - RP: K, SVHD, K/BB, ERA (W/OUTS 제외)
     """
     details = {
         "name": player.name,
@@ -206,9 +210,11 @@ def score_pitcher_zscore(player, matchup_context: dict = None) -> dict:
     is_rp = pos == "RP" or ("RP" in eligible and "SP" not in eligible)
 
     if is_sp:
-        relevant_cats = ["K", "W", "ERA", "WHIP"]
+        # SP: 이닝, 승, 삼진, K/BB, ERA (SVHD 제외)
+        relevant_cats = ["OUTS", "W", "K", "K/BB", "ERA"]
     elif is_rp:
-        relevant_cats = ["K", "SV", "HD", "ERA", "WHIP"]
+        # RP: 삼진, SVHD, K/BB, ERA (W/OUTS는 기여도 낮음)
+        relevant_cats = ["K", "SVHD", "K/BB", "ERA"]
     else:
         # SP/RP 겸업
         relevant_cats = config.PITCHING_CATEGORIES

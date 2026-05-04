@@ -123,9 +123,16 @@ def _blend(actual: dict, projection: dict, actual_weight: float, is_pitcher: boo
     ratio_keys = {"AVG", "ERA", "WHIP", "OBP", "SLG", "OPS", "K/9", "K/BB", "WPCT", "SV%", "OBA", "OOBP", "FPCT", "PPA"}
 
     # 프로젝션 게임 수 (시즌 전체 기준)
-    proj_games = projection.get("G", 0) or 150
-    actual_games = actual.get("G", 0) or 0
+    # 타자는 "G", 투수는 "GP"(Games Played) 사용
+    if is_pitcher:
+        proj_games = projection.get("GP") or projection.get("G") or 30
+        actual_games = actual.get("GP") or actual.get("G") or 0
+    else:
+        proj_games = projection.get("G") or projection.get("GP") or 150
+        actual_games = actual.get("G") or actual.get("GP") or 0
+
     proj_outs = projection.get("OUTS", 0) or 0
+    actual_outs = actual.get("OUTS", 0) or 0
 
     all_keys = set(actual.keys()) | set(projection.keys())
 
@@ -151,9 +158,10 @@ def _blend(actual: dict, projection: dict, actual_weight: float, is_pitcher: boo
             blended[key] = act_val * actual_weight + proj_val * proj_weight
         else:
             # 카운팅 스탯: per-game rate 블렌딩
-            if is_pitcher:
-                act_denom = actual.get("OUTS", 0) or 0
-                proj_denom = projection.get("OUTS", 0) or 0
+            # OUTS 자체는 G/GP 기준 (자기 자신 denom 방지)
+            if is_pitcher and key != "OUTS":
+                act_denom = actual_outs
+                proj_denom = proj_outs
             else:
                 act_denom = actual_games
                 proj_denom = proj_games
@@ -164,10 +172,7 @@ def _blend(actual: dict, projection: dict, actual_weight: float, is_pitcher: boo
             blended_rate = act_rate * actual_weight + proj_rate * proj_weight
 
             # 프로젝션 규모로 환산 (전체 시즌 기준)
-            if is_pitcher:
-                blended[key] = blended_rate * max(proj_denom, 1)
-            else:
-                blended[key] = blended_rate * max(proj_denom, 1)
+            blended[key] = blended_rate * max(proj_denom, 1)
 
     return blended
 
