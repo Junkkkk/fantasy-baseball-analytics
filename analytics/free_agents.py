@@ -255,7 +255,7 @@ def rank_free_agents(fa_list: list, target_categories: list[str], top_n: int = 1
         for cat in display_cats:
             cat_values[cat] = get_stat_value(stats, cat)
 
-        if score > 0 or not is_pitcher:
+        if stats:  # 스탯 데이터만 있으면 포함 (score 음수도 표시)
             eligible = player.eligibleSlots if hasattr(player, "eligibleSlots") else []
             pos_list = [e for e in eligible if e not in ("BE", "IL", "UTIL", "IF", "DH")]
             row = {

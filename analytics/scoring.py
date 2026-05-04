@@ -79,6 +79,10 @@ def compute_league_norms(league):
                 "type": "pitcher",
             }
 
+    # E(에러)는 ESPN 프로젝션에 없는 경우가 많아 fallback 설정
+    if "E" not in _league_norms:
+        _league_norms["E"] = {"mean": 5.0, "std": 3.0, "type": "hitter"}
+
     _norms_loaded = True
 
 
