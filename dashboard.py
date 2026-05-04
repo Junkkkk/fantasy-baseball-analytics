@@ -474,32 +474,40 @@ with tab3:
             fa_df = rank_free_agents(fa_list, selected_cats, daily_only=False, roster=my_team.roster)
             st.session_state["fa_df"] = fa_df
             if not fa_df.empty:
-                # 야수/투수 분리
-                hitting_cats_set = set(config.HITTING_CATEGORIES)
-                pitching_cats_set = set(config.PITCHING_CATEGORIES)
-
-                def _is_pitcher_row(row):
+                def _pos_type(row):
                     pos = row.get("position", "")
-                    return pos in ("SP", "RP", "P")
-
-                hitter_mask = ~fa_df.apply(_is_pitcher_row, axis=1)
-                pitcher_mask = fa_df.apply(_is_pitcher_row, axis=1)
-
-                lt_col1, lt_col2 = st.columns(2)
-                with lt_col1:
-                    st.markdown("#### 야수")
-                    hitter_df = fa_df[hitter_mask]
-                    if not hitter_df.empty:
-                        st.dataframe(hitter_df.reset_index(drop=True), use_container_width=True, hide_index=True)
+                    if pos in ("SP", "P"):
+                        return "SP"
+                    elif pos == "RP":
+                        return "RP"
                     else:
-                        st.caption("추천할 야수 FA가 없습니다.")
-                with lt_col2:
-                    st.markdown("#### 투수")
-                    pitcher_df = fa_df[pitcher_mask]
-                    if not pitcher_df.empty:
-                        st.dataframe(pitcher_df.reset_index(drop=True), use_container_width=True, hide_index=True)
+                        return "hitter"
+
+                fa_df["_pos_type"] = fa_df.apply(_pos_type, axis=1)
+
+                hitter_df = fa_df[fa_df["_pos_type"] == "hitter"].drop(columns=["_pos_type"])
+                sp_df = fa_df[fa_df["_pos_type"] == "SP"].drop(columns=["_pos_type"])
+                rp_df = fa_df[fa_df["_pos_type"] == "RP"].drop(columns=["_pos_type"])
+
+                st.markdown("#### 🏏 야수")
+                if not hitter_df.empty:
+                    st.dataframe(hitter_df.reset_index(drop=True), use_container_width=True, hide_index=True)
+                else:
+                    st.caption("추천할 야수 FA가 없습니다.")
+
+                sp_col, rp_col = st.columns(2)
+                with sp_col:
+                    st.markdown("#### ⚾ SP (선발)")
+                    if not sp_df.empty:
+                        st.dataframe(sp_df.reset_index(drop=True), use_container_width=True, hide_index=True)
                     else:
-                        st.caption("추천할 투수 FA가 없습니다.")
+                        st.caption("추천할 FA SP가 없습니다.")
+                with rp_col:
+                    st.markdown("#### 🔥 RP (불펜)")
+                    if not rp_df.empty:
+                        st.dataframe(rp_df.reset_index(drop=True), use_container_width=True, hide_index=True)
+                    else:
+                        st.caption("추천할 FA RP가 없습니다.")
             else:
                 st.info("추천할 FA가 없습니다.")
 
