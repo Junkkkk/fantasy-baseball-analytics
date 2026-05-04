@@ -8,6 +8,11 @@ from analytics.lineup import classify_players, _get_best_stats, PITCHER_POSITION
 from analytics.blended_stats import get_blended_stats
 from analytics.schedule import has_game_today, is_probable_starter_today, get_opponent_today
 
+# 포지션별 평가 카테고리
+SP_CATS = ["OUTS", "K", "K/BB", "W", "ERA"]   # SP: 이닝, 삼진, K/BB, 승, ERA
+RP_CATS = ["K", "SVHD", "K/BB", "ERA"]         # RP: 삼진, 세이브+홀드, K/BB, ERA
+HITTER_CATS = config.HITTING_CATEGORIES        # 타자: 리그 설정 그대로
+
 
 def analyze_roster_needs(roster: list) -> dict:
     """현재 로스터의 포지션 현황과 보강 필요 포지션을 분석한다.
@@ -107,21 +112,41 @@ def identify_weak_categories(my_stats: dict, opp_stats: dict) -> list[dict]:
 
 
 def _score_player(player, target_categories: list[str]) -> float:
-    """타겟 카테고리 기준으로 선수 점수를 계산한다."""
+    """Z-score 기반으로 선수 점수를 계산한다.
+
+    투수는 포지션(SP/RP)에 맞는 카테고리만 사용하고,
+    target_categories와의 교집합으로 가중치를 부여한다.
+    """
+    from analytics.scoring import z_score, is_norms_loaded
+    if not is_norms_loaded():
+        return 0.0
+
     is_pitcher = _is_pitcher(player)
     stats = get_blended_stats(player, is_pitcher=is_pitcher)
     if not stats:
         return 0.0
+
+    # 포지션별 평가 카테고리 결정
+    pos = player.position if hasattr(player, "position") else ""
+    eligible = player.eligibleSlots if hasattr(player, "eligibleSlots") else []
+    if pos == "SP" or ("SP" in eligible and "RP" not in eligible):
+        eval_cats = SP_CATS
+    elif pos == "RP" or ("RP" in eligible and "SP" not in eligible):
+        eval_cats = RP_CATS
+    elif is_pitcher:
+        eval_cats = SP_CATS  # 겸업은 SP로 취급
+    else:
+        eval_cats = HITTER_CATS
+
+    # target_categories와 겹치는 카테고리는 2x 가중치
+    target_set = set(target_categories)
     score = 0.0
-    for cat in target_categories:
+    for cat in eval_cats:
         val = get_stat_value(stats, cat)
-        if cat in config.LOWER_IS_BETTER:
-            ip_key = STAT_KEY_MAP.get("IP", "OUTS")
-            ip = stats.get(ip_key, 0) or 0
-            if ip > 0:
-                score += (1.0 / max(val, 0.01)) * 10
-        else:
-            score += val
+        z = z_score(val, cat)
+        weight = 2.0 if cat in target_set else 1.0
+        score += z * weight
+
     return score
 
 
@@ -211,20 +236,26 @@ def rank_free_agents(fa_list: list, target_categories: list[str], top_n: int = 1
         if not stats:
             continue
 
-        score = 0.0
-        cat_values = {}
-        for cat in target_categories:
-            val = get_stat_value(stats, cat)
-            cat_values[cat] = val
-            if cat in config.LOWER_IS_BETTER:
-                ip_key = STAT_KEY_MAP.get("IP", "OUTS")
-                ip = stats.get(ip_key, 0) or 0
-                if ip > 0:
-                    score += (1.0 / max(val, 0.01)) * 10
-            else:
-                score += val
+        # Z-score 기반 score 계산 (포지션별 카테고리)
+        score = _score_player(player, target_categories)
 
-        if score > 0:
+        # 표시용 카테고리 값
+        pos = player.position if hasattr(player, "position") else ""
+        eligible = player.eligibleSlots if hasattr(player, "eligibleSlots") else []
+        if pos == "SP" or ("SP" in eligible and "RP" not in eligible):
+            display_cats = SP_CATS
+        elif pos == "RP" or ("RP" in eligible and "SP" not in eligible):
+            display_cats = RP_CATS
+        elif is_pitcher:
+            display_cats = SP_CATS
+        else:
+            display_cats = HITTER_CATS
+
+        cat_values = {}
+        for cat in display_cats:
+            cat_values[cat] = get_stat_value(stats, cat)
+
+        if score > 0 or not is_pitcher:
             eligible = player.eligibleSlots if hasattr(player, "eligibleSlots") else []
             pos_list = [e for e in eligible if e not in ("BE", "IL", "UTIL", "IF", "DH")]
             row = {
@@ -252,8 +283,9 @@ def rank_free_agents(fa_list: list, target_categories: list[str], top_n: int = 1
                     row["최약score"] = "-"
                     row["업그레이드"] = "신규"
 
-            for cat in target_categories:
-                row[cat] = round(cat_values.get(cat, 0), 3)
+            for cat in display_cats:
+                val = cat_values.get(cat, 0)
+                row[cat] = round(val, 3) if cat not in ("OUTS",) else f"{val/3:.1f}IP"
             rows.append(row)
 
     df = pd.DataFrame(rows)
