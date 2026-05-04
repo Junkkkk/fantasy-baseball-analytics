@@ -148,10 +148,12 @@ def _get_roster_by_position(roster: list, target_categories: list[str]) -> dict:
             if "RP" not in positions:
                 positions.append("RP")
 
-        score = _score_player(player, target_categories)
         injury = getattr(player, "injuryStatus", "ACTIVE")
-        if injury in ("IL", "IL10", "IL60", "FIFTEEN_DAY_DL", "SIXTY_DAY_DL", "TEN_DAY_DL"):
-            score *= 0.5
+        # IL 선수는 팀내 최약 비교 대상에서 제외
+        if injury in ("IL", "IL10", "IL60", "FIFTEEN_DAY_DL", "SIXTY_DAY_DL", "TEN_DAY_DL", "OUT"):
+            continue
+
+        score = _score_player(player, target_categories)
 
         for pos in positions:
             if pos not in pos_map:
