@@ -60,6 +60,8 @@ def recommend_lineup(roster: list, matchup_context: dict = None) -> pd.DataFrame
             "상대": h.get("opponent", ""),
             "상대SP": h.get("opp_pitcher", ""),
             "SP ERA": h.get("opp_era", ""),
+            "vs SP": h.get("vs_SP", "-"),
+            "wRC+": h.get("wRC+", "-"),
             "구장보정": adj_str,
             "score": h["score"],
             "카테고리별": cat_str,

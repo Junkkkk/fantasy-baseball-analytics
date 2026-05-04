@@ -18,6 +18,7 @@ import config
 from analytics.matchup import get_player_projection, get_stat_value
 from analytics.blended_stats import get_blended_stats
 from analytics.schedule import has_game_today, get_opponent_today, get_matchup_adjustment
+from analytics.mlb_stats import get_wrc_plus, get_batter_vs_pitcher
 
 
 # 리그 통계 캐시
@@ -129,10 +130,22 @@ def score_hitter_zscore(player, matchup_context: dict = None) -> dict:
 
     # 매치업 조정 (상대 투수 + 구장)
     matchup_adj = get_matchup_adjustment(player, is_pitcher=False)
-    details["opp_pitcher"] = matchup_adj["opp_pitcher"]
+    opp_pitcher = matchup_adj["opp_pitcher"]
+    details["opp_pitcher"] = opp_pitcher
     details["opp_era"] = matchup_adj["opp_era"]
     details["matchup_adj"] = matchup_adj["total_adj"]
     details["venue"] = matchup_adj["venue"]
+
+    # wRC+
+    wrc = get_wrc_plus(player.name)
+    details["wRC+"] = wrc if wrc is not None else "-"
+
+    # 상대 SP 상대전적
+    if opp_pitcher and opp_pitcher != "-":
+        vs = get_batter_vs_pitcher(player.name, opp_pitcher)
+        details["vs_SP"] = vs["display"] if vs else "-"
+    else:
+        details["vs_SP"] = "-"
 
     from analytics.blended_stats import get_blend_info
     stats = get_blended_stats(player, is_pitcher=False)
