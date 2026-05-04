@@ -392,7 +392,16 @@ def recommend_pitcher_swaps(my_roster: list, fa_list: list) -> dict:
             "fa_starting_today": DataFrame (FA SP 중 오늘 등판 예정 + 시즌 기록),
         }
     """
-    from analytics.scoring import score_pitcher_zscore
+    from analytics.scoring import z_score
+
+    def _sp_zscore(p) -> float:
+        """오늘 경기 여부와 무관하게 시즌 스탯 기반 SP Z-score를 계산한다."""
+        stats = get_blended_stats(p, is_pitcher=True) or {}
+        total = 0.0
+        for cat in SP_CATS:
+            val = get_stat_value(stats, cat)
+            total += z_score(val, cat)
+        return round(total, 2)
 
     # 내 팀에서 SP만 필터
     my_pitchers = []
@@ -412,7 +421,7 @@ def recommend_pitcher_swaps(my_roster: list, fa_list: list) -> dict:
             stats = get_blended_stats(p, is_pitcher=True) or {}
             outs = stats.get("OUTS", 0) or 0
             ip = outs / 3.0 if outs > 0 else 0
-            score = score_pitcher_zscore(p).get("score", 0)
+            score = _sp_zscore(p)
             my_off_rows.append({
                 "name": p.name,
                 "proTeam": getattr(p, "proTeam", ""),
@@ -421,7 +430,7 @@ def recommend_pitcher_swaps(my_roster: list, fa_list: list) -> dict:
                 "W": int(get_stat_value(stats, "W")),
                 "ERA": round(get_stat_value(stats, "ERA"), 2),
                 "K/BB": round(get_stat_value(stats, "K/BB"), 2),
-                "score": round(score, 2),
+                "score": score,
             })
 
     # FA 중 오늘 등판하는 SP 전체
@@ -435,7 +444,7 @@ def recommend_pitcher_swaps(my_roster: list, fa_list: list) -> dict:
             stats = get_blended_stats(p, is_pitcher=True) or {}
             outs = stats.get("OUTS", 0) or 0
             ip = outs / 3.0 if outs > 0 else 0
-            score = score_pitcher_zscore(p).get("score", 0)
+            score = _sp_zscore(p)
             fa_rows.append({
                 "name": p.name,
                 "proTeam": getattr(p, "proTeam", ""),
@@ -445,7 +454,7 @@ def recommend_pitcher_swaps(my_roster: list, fa_list: list) -> dict:
                 "W": int(get_stat_value(stats, "W")),
                 "ERA": round(get_stat_value(stats, "ERA"), 2),
                 "K/BB": round(get_stat_value(stats, "K/BB"), 2),
-                "score": round(score, 2),
+                "score": score,
             })
 
     # 내 SP 전체 score 계산 (등판 여부 무관, 기준선용)
@@ -454,7 +463,7 @@ def recommend_pitcher_swaps(my_roster: list, fa_list: list) -> dict:
         injury = getattr(p, "injuryStatus", "ACTIVE")
         if injury in ("OUT", "IL", "IL10", "IL60", "FIFTEEN_DAY_DL", "SIXTY_DAY_DL", "TEN_DAY_DL"):
             continue
-        s = score_pitcher_zscore(p).get("score", 0)
+        s = _sp_zscore(p)
         all_my_scores.append(s)
 
     my_sp_avg = round(sum(all_my_scores) / len(all_my_scores), 2) if all_my_scores else 0
